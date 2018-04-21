@@ -26,14 +26,14 @@ DROP SEQUENCE Potravina_seq;
 DROP SEQUENCE Surovina_seq;
 
 CREATE TABLE Zamestnanec(
-    id_zam NUMBER NOT NULL,
+    id_zam NUMBER, --NOT NULL,
     jmeno VARCHAR2(30) CONSTRAINT zamestnanec_jmeno_NN NOT NULL, 
     prijmeni VARCHAR2(30) CONSTRAINT zamestnanec_prijmeni_NN NOT NULL,
     rodne_cislo NUMBER CONSTRAINT zamestnanec_rc_NN NOT NULL,
     adresa VARCHAR2(50),
     pozice VARCHAR2(30),
-    CONSTRAINT PK_zamestnanec PRIMARY KEY (id_zam),
-    CONSTRAINT CHK_zamestanec_rc CHECK (MOD(rodne_cislo, 11) = 0 AND ( (SUBSTR(rodne_cislo, 3, 2) < 13 AND SUBSTR(rodne_cislo, 3, 2) > 0) OR (SUBSTR(rodne_cislo, 3, 2) < 63 AND SUBSTR(rodne_cislo, 3, 2) > 50) ) )
+    CONSTRAINT PK_zamestnanec PRIMARY KEY (id_zam)
+    --CONSTRAINT CHK_zamestanec_rc CHECK (MOD(rodne_cislo, 11) = 0 AND ( (SUBSTR(rodne_cislo, 3, 2) < 13 AND SUBSTR(rodne_cislo, 3, 2) > 0) OR (SUBSTR(rodne_cislo, 3, 2) < 63 AND SUBSTR(rodne_cislo, 3, 2) > 50) ) )
 );
 
 -- tvorba tabulek
@@ -148,7 +148,8 @@ CREATE TABLE Obsahuje_potravina(
 );
 
 -- tvorba sekcenci
-CREATE SEQUENCE Zamestnanec_seq;
+CREATE SEQUENCE Zamestnanec_seq
+    START WITH 1;
 CREATE SEQUENCE Rezervace_seq;
 CREATE SEQUENCE Objednavka_seq;
 CREATE SEQUENCE Stul_seq;
@@ -156,20 +157,167 @@ CREATE SEQUENCE Uctenka_seq;
 CREATE SEQUENCE Potravina_seq;
 CREATE SEQUENCE Surovina_seq;
 
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Jan', 'Sorm', '9911111111', 'Tyrsova 70, Brno-Kralovo Pole', 'spolumajitel');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Alena', 'Tesarova', '9951151111', 'Alencina 42, Brno-Lisen', 'spolumajitel');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Vaclav', 'Kraus', '8811111111', 'U Alenky 2, Brno-Medlanky', 'sefkuchar');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Daniel', 'Uhricek', '0011111111', 'Kolejni 4, Brno-Kralovo Pole', 'kuchar');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Zuzana', 'Cisarova', '6651261111', 'Kolejni 4, Brno-Kralovo Pole', 'servirka');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Arina', 'Starastsina', '6651261111', 'Jegora Pavlovice 4, Minsk', 'servirka');
-INSERT INTO Zamestnanec
-VALUES ( Zamestnanec_seq.NEXTVAL, 'Jan', 'Konstant', '7751261111', 'Trnita 7 Brno-Lisen', 'kuchar');
+----------------------------------------------------------------------
+-- role
+--CREATE ROLE majitel; nemame dostatek opravneni
+
+GRANT ALL ON Zamestnanec TO majitel;
+GRANT ALL ON Rezervace TO majitel;
+GRANT ALL ON Objednavka TO majitel;
+GRANT ALL ON Potravina TO majitel;
+GRANT ALL ON Stul TO majitel;
+GRANT ALL ON Uctenka TO majitel;
+GRANT ALL ON Surovina TO majitel;
+
+GRANT ALL ON Objednavka_pro_stul TO majitel;
+GRANT ALL ON Rezervace_na_stul TO majitel;
+GRANT ALL ON Obsahuje_surovina TO majitel;
+GRANT ALL ON Obsahuje_potravina TO majitel;
+
+
+-----------------------------------------------------------------------
+-- triggery
+-- automaticke generovani primarniho klice tabulky Zamestnanec ze sekvence
+CREATE OR REPLACE TRIGGER Zamestnanec_trigger_ID
+BEFORE INSERT ON Zamestnanec
+FOR EACH ROW
+BEGIN
+    IF :new.id_zam IS NULL THEN 
+    SELECT Zamestnanec_seq.NEXTVAL
+    INTO :NEW.id_zam
+    FROM dual;
+    END IF;
+END Zamestnanec_trigger_ID;
+/
+
+-- kontrola rodneho cisla
+--CONSTRAINT CHK_zamestanec_rc CHECK (MOD(rodne_cislo, 11) = 0 AND ( (SUBSTR(rodne_cislo, 3, 2) < 13 AND SUBSTR(rodne_cislo, 3, 2) > 0) OR (SUBSTR(rodne_cislo, 3, 2) < 63 AND SUBSTR(rodne_cislo, 3, 2) > 50) ) )
+CREATE OR REPLACE TRIGGER Zamestnanec_trigger_RC
+BEFORE INSERT OR UPDATE OF rodne_cislo ON Zamestnanec
+FOR EACH ROW
+BEGIN
+    IF  ( MOD (:new.rodne_cislo, 11) != 0 OR ( ( SUBSTR(:new.rodne_cislo, 3, 2) > 13 OR SUBSTR(:new.rodne_cislo, 3, 2) < 0) AND (SUBSTR(:new.rodne_cislo, 3, 2) > 63 OR SUBSTR(:new.rodne_cislo, 3, 2) < 50) ) ) THEN
+       RAISE_APPLICATION_ERROR(-20001,'Neplatne rodne cislo');
+    END IF;
+END Zamestnanec_trigger_RC;
+/
+
+-- PROCEDURY
+
+-- pocet a informace o obsazenych stolech k danemu datu
+CREATE OR REPLACE PROCEDURE informace_obsazene_stoly_k_datu( datum_zvolene in DATE)
+is
+    CURSOR obsazene_stoly IS
+        
+        SELECT DISTINCT id_stul, umisteni, pocet_osob, to_char( Objednavka.datum , 'YYYYMMDDHH') datum
+        FROM Stul, Objednavka, Objednavka_pro_stul 
+        WHERE Stul.id_stul = Objednavka_pro_stul.stul
+            AND Objednavka.id_objednavka = Objednavka_pro_stul.objednavka;       
+            
+    obsazene_stoly_rec     obsazene_stoly%ROWTYPE;
+    pocet_stolu             NUMBER;
+    pocet_stolu_celkem      NUMBER;
+    umisteni_stolu          Stul.umisteni%TYPE ;
+    pocet_osob              Stul.pocet_osob%TYPE ;
+BEGIN    
+    -- open cursor and loop data
+    pocet_stolu := 0;
+    SELECT count(*) INTO pocet_stolu_celkem FROM Stul;
+    --dbms_output.put_line( ', DATUM: ' || datum_zvolene );
+    OPEN obsazene_stoly;
+    LOOP
+        FETCH obsazene_stoly into obsazene_stoly_rec;
+        EXIT WHEN obsazene_stoly%NOTFOUND;      
+        if ( obsazene_stoly_rec.datum =  TO_CHAR(datum_zvolene, 'YYYYMMDDHH') ) THEN
+            pocet_stolu := pocet_stolu + 1 ;
+            dbms_output.put_line('Stul ID: ' || obsazene_stoly_rec.id_stul || ', Pocet osob: ' || obsazene_stoly_rec.pocet_osob || ', Umisteni: ' || obsazene_stoly_rec.umisteni  );  
+        END IF;
+    END LOOP;
+        dbms_output.put_line('Pocet obsazenych stolu: ' || pocet_stolu || '/' || pocet_stolu_celkem || ', Obsazenost: ' || ROUND( (pocet_stolu * 100 )/ pocet_stolu_celkem, 2) || '%' );
+     EXCEPTION
+    WHEN ZERO_DIVIDE THEN
+        dbms_output.put_line('Pocet obsazenych stolu: ' || pocet_stolu || '/' || pocet_stolu_celkem || ', Obsazenost: ' || 0 || '%' );
+     WHEN OTHERS THEN
+        Raise_Application_Error(-20002, 'Neznama chyba');
+END;
+/
+
+-- kolik objednavek a jaka je celkova suma za dane obdobi
+CREATE OR REPLACE PROCEDURE statistika_objednavek_za_obdobi( datum_od in DATE, datum_do in DATE)
+is
+    CURSOR objednavky IS     
+        SELECT suma, to_char( datum, 'YYYYMMDD' ) datum
+        FROM Objednavka;      
+            
+    objednavky_rec       objednavky%ROWTYPE;
+    suma                 Objednavka.suma%TYPE;
+    pocet_dni            NUMBER;  
+    pocet_objednavek     NUMBER;
+
+BEGIN    
+    -- open cursor and loop data
+    suma := 0;
+    pocet_objednavek := 0;
+    pocet_dni :=  TO_CHAR(datum_do, 'YYYYMMDD') - TO_CHAR(datum_od, 'YYYYMMDD');
+    OPEN objednavky;
+    LOOP
+        FETCH objednavky into objednavky_rec;
+        EXIT WHEN objednavky%NOTFOUND;      
+        if ( objednavky_rec.datum >= TO_CHAR(datum_od, 'YYYYMMDD') AND objednavky_rec.datum <= TO_CHAR(datum_do, 'YYYYMMDD') ) THEN
+            suma := suma + objednavky_rec.suma ;
+            pocet_objednavek := pocet_objednavek + 1;     
+        END IF;
+    END LOOP;
+        dbms_output.put_line('Celkovy pocet dni: ' || pocet_dni || ', Pocet objednavek: ' || pocet_objednavek || ', Celkova suma: ' || suma );
+     EXCEPTION
+     WHEN OTHERS THEN
+        Raise_Application_Error(-20002, 'Neznama chyba');
+END;
+/
+
+-- majitel dostane i prava spousten dane procedury
+GRANT EXECUTE ON statistika_objednavek_za_obdobi TO majitel;
+GRANT EXECUTE ON informace_obsazene_stoly_k_datu TO majitel;
+
+
+------------------------------------------------------------
+-- spousteni procedur
+
+-- informace o obsazenych stolech k danemu datu
+exec informace_obsazene_stoly_k_datu ( TO_DATE('20180326184705', 'yyyymmddhh24miss'));
+
+-- informace o obsazenych stolech k danemu datu
+exec informace_obsazene_stoly_k_datu ( TO_DATE('20180324183350', 'yyyymmddhh24miss') );
+
+-- informace o obsazenych stolech k danemu datu, deleni nulou
+exec informace_obsazene_stoly_k_datu ( TO_DATE('20190324183350', 'yyyymmddhh24miss'));
+
+-- statistika za obdobi
+exec statistika_objednavek_za_obdobi( TO_DATE('20180324183350', 'yyyymmddhh24miss') , TO_DATE('20180326184705', 'yyyymmddhh24miss')  );
+
+-----------------------------------------------------------------
+
+    
+-- priklad prvniho triggeru:
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES (  'Jan', 'Sorm', '9911111111', 'Tyrsova 70, Brno-Kralovo Pole', 'spolumajitel');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES (  'Alena', 'Tesarova', '9951151111', 'Alencina 42, Brno-Lisen', 'spolumajitel');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES (  'Vaclav', 'Kraus', '8811111111', 'U Alenky 2, Brno-Medlanky', 'sefkuchar');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES (  'Daniel', 'Uhricek', '0011111111', 'Kolejni 4, Brno-Kralovo Pole', 'kuchar');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES (  'Zuzana', 'Cisarova', '6651261111', 'Kolejni 4, Brno-Kralovo Pole', 'servirka');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES ( 'Arina', 'Starastsina', '6651261111', 'Jegora Pavlovice 4, Minsk', 'servirka');
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES ( 'Jan', 'Konstant', '7751261111', 'Trnita 7 Brno-Lisen', 'kuchar');
+
+--priklad na druhy trigger, spatne RC, detekce chyby
+INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
+VALUES ( 'Jan', 'Smoula', '7851261111', 'Ulita 785 Brno-Lisen', 'kuchar cisnik');
+
 
 INSERT INTO Rezervace
 VALUES ( Rezervace_seq.NEXTVAL, TO_DATE('20180324150000', 'yyyymmddhh24miss'), 'Jiri', 'Matejka', 'jiri@matejka.cz', 3);
@@ -344,6 +492,7 @@ INSERT INTO Rezervace_na_stul
 VALUES ( 3, 6 );
 
 
+
 -- 2 dotazy pro 2 tabulky
 --vypise info o vsech rezervacich dne 25.3. (tj. jestli byla rezervace a kdy byly vyuctovany)
 SELECT rez.jmeno_zakaznika || ' ' || rez.prijmeni_zakaznika zakaznik,
@@ -405,7 +554,7 @@ WHERE NOT EXISTS (
 
 
 -- 1 dotaz IN
--- vypise vsechny suroviny, ktere jsou pouzity v pive (id 6)
+-- vypise vsechny suroviny, ktere jsou pouzity v pive (id 4)
 SELECT sur.jmeno_suroviny surovina
 FROM Surovina sur
 WHERE sur.id_surovina IN (
@@ -413,3 +562,48 @@ WHERE sur.id_surovina IN (
     FROM Obsahuje_surovina
     WHERE potravina = 4
 );
+
+-- vsechny stoly k objednavkam
+SELECT DISTINCT id_stul, umisteni, pocet_osob, Objednavka.datum
+        FROM Stul, Objednavka, Objednavka_pro_stul 
+        WHERE Stul.id_stul = Objednavka_pro_stul.stul
+            AND Objednavka.id_objednavka = Objednavka_pro_stul.objednavka;
+
+
+-------------------------------------------------------------------
+-- EXPLAN PLAN
+
+EXPLAIN PLAN FOR
+SELECT id_objednavka, sum(Objednavka.suma)
+FROM Objednavka, Stul, Objednavka_pro_stul
+WHERE Objednavka.id_objednavka = Objednavka_pro_stul.objednavka
+    AND Objednavka_pro_stul.stul = Stul.id_stul
+GROUP BY id_objednavka;
+    
+SELECT * FROM TABLE(DBMS_XPLAN.display); 
+
+CREATE INDEX index_objednavka_stul ON Objednavka_pro_stul(objednavka, stul);
+
+EXPLAIN PLAN FOR
+SELECT id_objednavka, sum(Objednavka.suma)
+FROM Objednavka, Stul, Objednavka_pro_stul
+WHERE Objednavka.id_objednavka = Objednavka_pro_stul.objednavka
+    AND Objednavka_pro_stul.stul = Stul.id_stul
+GROUP BY id_objednavka;
+ 
+SELECT * FROM TABLE(DBMS_XPLAN.display);   
+
+-------------------------------------------------------------------
+-- Materializovany pohled
+-- kolik vytvoril zamestnanec rezervaci
+DROP MATERIALIZED VIEW zamestnanec_rezervace;
+
+CREATE MATERIALIZED VIEW zamestnanec_rezervace AS
+    SELECT prijmeni, count(id_rezervace)
+    FROM Rezervace, Zamestnanec
+    WHERE Rezervace.vlozil = Zamestnanec.id_zam
+    GROUP BY prijmeni;
+
+
+SELECT * FROM zamestnanec_rezervace;
+
