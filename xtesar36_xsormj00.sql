@@ -78,8 +78,8 @@ CREATE TABLE Objednavka_pro_stul(
     CONSTRAINT FK_objednavka_pro_stul_stul FOREIGN KEY (stul)
                     REFERENCES Stul(id_stul),
     CONSTRAINT FK_objednavka_pro_stul_objednavka FOREIGN KEY (objednavka)
-                    REFERENCES Objednavka(id_objednavka),
-    CONSTRAINT PK_objednavka_pro_stul PRIMARY KEY (stul, objednavka)
+                    REFERENCES Objednavka(id_objednavka)
+    --CONSTRAINT PK_objednavka_pro_stul PRIMARY KEY (stul, objednavka)
 );
 
 CREATE TABLE Rezervace_na_stul(
@@ -159,20 +159,20 @@ CREATE SEQUENCE Surovina_seq;
 
 ----------------------------------------------------------------------
 -- role
---CREATE ROLE majitel; nemame dostatek opravneni
+--CREATE ROLE xsormj00; nemame dostatek opravneni
 
-GRANT ALL ON Zamestnanec TO majitel;
-GRANT ALL ON Rezervace TO majitel;
-GRANT ALL ON Objednavka TO majitel;
-GRANT ALL ON Potravina TO majitel;
-GRANT ALL ON Stul TO majitel;
-GRANT ALL ON Uctenka TO majitel;
-GRANT ALL ON Surovina TO majitel;
+GRANT ALL ON Zamestnanec TO xsormj00;
+GRANT ALL ON Rezervace TO xsormj00;
+GRANT ALL ON Objednavka TO xsormj00;
+GRANT ALL ON Potravina TO xsormj00;
+GRANT ALL ON Stul TO xsormj00;
+GRANT ALL ON Uctenka TO xsormj00;
+GRANT ALL ON Surovina TO xsormj00;
 
-GRANT ALL ON Objednavka_pro_stul TO majitel;
-GRANT ALL ON Rezervace_na_stul TO majitel;
-GRANT ALL ON Obsahuje_surovina TO majitel;
-GRANT ALL ON Obsahuje_potravina TO majitel;
+GRANT ALL ON Objednavka_pro_stul TO xsormj00;
+GRANT ALL ON Rezervace_na_stul TO xsormj00;
+GRANT ALL ON Obsahuje_surovina TO xsormj00;
+GRANT ALL ON Obsahuje_potravina TO xsormj00;
 
 
 -----------------------------------------------------------------------
@@ -275,9 +275,9 @@ BEGIN
 END;
 /
 
--- majitel dostane i prava spousten dane procedury
-GRANT EXECUTE ON statistika_objednavek_za_obdobi TO majitel;
-GRANT EXECUTE ON informace_obsazene_stoly_k_datu TO majitel;
+-- xsormj00 dostane i prava spousten dane procedury
+GRANT EXECUTE ON statistika_objednavek_za_obdobi TO xsormj00;
+GRANT EXECUTE ON informace_obsazene_stoly_k_datu TO xsormj00;
 
 
 ------------------------------------------------------------
@@ -300,9 +300,9 @@ exec statistika_objednavek_za_obdobi( TO_DATE('20180324183350', 'yyyymmddhh24mis
     
 -- priklad prvniho triggeru:
 INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
-VALUES (  'Jan', 'Sorm', '9911111111', 'Tyrsova 70, Brno-Kralovo Pole', 'spolumajitel');
+VALUES (  'Jan', 'Sorm', '9911111111', 'Tyrsova 70, Brno-Kralovo Pole', 'spoluxsormj00');
 INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
-VALUES (  'Alena', 'Tesarova', '9951151111', 'Alencina 42, Brno-Lisen', 'spolumajitel');
+VALUES (  'Alena', 'Tesarova', '9951151111', 'Alencina 42, Brno-Lisen', 'spoluxsormj00');
 INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
 VALUES (  'Vaclav', 'Kraus', '8811111111', 'U Alenky 2, Brno-Medlanky', 'sefkuchar');
 INSERT INTO Zamestnanec (jmeno, prijmeni, rodne_cislo, adresa, pozice)
@@ -598,12 +598,21 @@ SELECT * FROM TABLE(DBMS_XPLAN.display);
 -- kolik vytvoril zamestnanec rezervaci
 DROP MATERIALIZED VIEW zamestnanec_rezervace;
 
-CREATE MATERIALIZED VIEW zamestnanec_rezervace AS
+CREATE MATERIALIZED VIEW zamestnanec_rezervace
+    CACHE -- pro lepsi nacitani z pohledu
+    REFRESH ON COMMIT -- pohled s obnovou po commitu nad zdrojovou tabulkou
+    AS
     SELECT prijmeni, count(id_rezervace)
     FROM Rezervace, Zamestnanec
     WHERE Rezervace.vlozil = Zamestnanec.id_zam
     GROUP BY prijmeni;
 
+GRANT ALL ON zamestnanec_rezervace TO xsormj00;
+
+-- demonstrace pohledu
+INSERT INTO Rezervace (id_rezervace,datum, jmeno_zakaznika, prijmeni_zakaznika, kontakt_zakaznika, vlozil) 
+VALUES ( Rezervace_seq.NEXTVAL, TO_DATE('20180329150000', 'yyyymmddhh24miss'), 'Jana', 'Spanelova', 'hopskulka@seznam.cz', 3);
+
+COMMIT;
 
 SELECT * FROM zamestnanec_rezervace;
-
